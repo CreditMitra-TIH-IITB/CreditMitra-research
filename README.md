@@ -1,5 +1,5 @@
-# DP-QLoRA Benchmark & Privacy Audit — Complete Script Suite
-## CreditMitra · Qwen2.5-1.5B · ε=1.9911 · On-premise RBI-compliant
+# DP-QLoRA Benchmark & Privacy Audit 
+## CreditMitra · Qwen2.5-1.5B · ε=1.9911 
 
 All scripts write to: `benchmark_payee/outputs_privacy_audit/`
 
@@ -24,31 +24,25 @@ Targets    = q_proj, k_proj, v_proj, o_proj
 
 ## Scripts at a Glance
 
-| Script | GPU? | Runtime | What it proves |
-|--------|------|---------|----------------|
-| `script4_tradeoff.py` | **No** | < 1 min | ε=2 is the utility knee; full model comparison |
-| `script5_hyperparam.py` | **No** | < 1 min | Every hyperparameter justified with research backing |
-| `script1_extraction.py` | Yes | 15–25 min | DP suppresses verbatim memorization |
-| `script2_canary.py` | Yes | 20–30 min | DP prevents name↔handle recall (fixed canary) |
-| `script3_mia.py` | Yes | 30–45 min | 8-variant MIA all ≈ 0.51 AUC on ε=2 model |
-
-**Recommended run order:** 4 → 5 → 1 → 2 → 3 → 4 (re-run to pick up live MIA)
+| Script | What it proves |
+|--------|----------------|
+| `script4_tradeoff.py` | ε=2 is the utility knee; full model comparison |
+| `script5_hyperparam.py` | Every hyperparameter justified with research backing |
+| `script1_extraction.py` | DP suppresses verbatim memorization |
+| `script2_canary.py` | DP prevents name↔handle recall (fixed canary) |
+| `script3_mia.py` | 8-variant MIA all ≈ 0.51 AUC on ε=2 model |
 
 ---
 
 ## Script 4 — Privacy-Utility Tradeoff Dashboard
-**File:** `script4_tradeoff.py`  **GPU: None**
-
-Assembles the core story from your existing JSON outputs. Run this first
-to verify everything works, and again last to pull in live MIA from script 3.
-
-**6-panel dashboard:**
-- Panel A: Utility (F1) vs ε — all models compared
-- Panel B: Privacy-utility knee curve (ε=2 is the operating point)
-- Panel C: MIA-AUC vs ε (privacy floor — updates automatically from script 3)
-- Panel D: ε accumulation across all four training runs (RDP accountant live)
-- Panel E: Full benchmark table — all models, all metrics
-- Panel F: Error breakdown — exact→partial shift, not catastrophic failure
+**File:** `script4_tradeoff.py`  
+**plots:**
+- Utility (F1) vs ε — all models compared
+- Privacy-utility knee curve (ε=2 is the operating point)
+- MIA-AUC vs ε (privacy floor — updates automatically from script 3)
+- ε accumulation across all four training runs (RDP accountant live)
+- Full benchmark table — all models, all metrics
+- Error breakdown — exact→partial shift, not catastrophic failure
 
 ```bash
 python script4_tradeoff.py --project_root /path/to/benchmark_payee
@@ -56,30 +50,30 @@ python script4_tradeoff.py --project_root /path/to/benchmark_payee
 
 **Outputs:**
 ```
-script4_tradeoff_dashboard.pdf    # main 6-panel figure
-script4_knee_standalone.pdf       # standalone for LaTeX \includegraphics
-script4_eps_accumulation.pdf      # standalone ε curves for LaTeX
+script4_tradeoff_dashboard.pdf    
+script4_knee_standalone.pdf       
+script4_eps_accumulation.pdf      
 ```
 
 ---
 
-## Script 5 — Hyperparameter Justification Dashboard
-**File:** `script5_hyperparam.py`  **GPU: None**
+## Script 5 — Hyperparameter Justification 
+**File:** `script5_hyperparam.py`  
 
 Shows WHY every hyperparameter was chosen using the 4-account ε sweep
 results, the Google "How to DP-fy ML" paper framework, and the real
 trainer_state from checkpoint-400. Two output pages.
 
-**Page 1 — 9-panel quantitative dashboard:**
-- Panel A: ε sweep knee from outputs_1/2/4/8 — why ε=2
-- Panel B: Privacy tier framework — your model vs Gboard/Facebook/Apple
-- Panel C: NSR vs batch size (theory curve + your B=24 point)
-- Panel D: LoRA rank vs trainable params — why r=16
-- Panel E: Non-DP training dynamics (loss, grad norm, LR from real trainer_state)
-- Panel F: DP training dynamics — loss + per-epoch ε (outputs_2)
-- Panel G: Full model comparison — all 8 models, EM + char-sim
-- Panel H: DP cost anatomy — exact→partial, not catastrophic failure
-- Panel I: NSR for all four ε runs from actual σ values
+**Page 1 — quantitative plots:**
+- ε sweep knee from outputs_1/2/4/8 — why ε=2
+- Privacy tier framework — model vs Gboard/Facebook/Apple
+- NSR vs batch size (theory curve + your B=24 point)
+- LoRA rank vs trainable params — why r=16
+- Non-DP training dynamics (loss, grad norm, LR from real trainer_state)
+- DP training dynamics — loss + per-epoch ε (outputs_2)
+- Full model comparison — all 8 models, EM + char-sim
+- DP cost anatomy — exact→partial, not catastrophic failure
+- NSR for all four ε runs from actual σ values
 
 **Page 2 — Hyperparameter justification table:**
 Every parameter (ε, δ, C, B, r, α, epochs, MAX_LENGTH, accounting, sampling)
@@ -103,14 +97,14 @@ script5_error_breakdown.pdf       # standalone H for LaTeX
 ---
 
 ## Script 1 — Training Data Extraction Test
-**File:** `script1_extraction.py`  **GPU: Yes (outputs_2 + outputs_8)**
+**File:** `script1_extraction.py`  
 
 Gives the model the first 50% of a REAL training narration and checks if it
 can complete the suffix verbatim. The suffix is HIDDEN — the model must have
 memorized it to reproduce it. If DP model completes fewer train suffixes than
 non-DP but both are similar on val → DP reduced memorization.
 
-This is a legitimate privacy test because:
+This is a privacy test because:
 - Uses real training narrations, not fake canaries
 - Suffix never appears in the query
 - Train vs val comparison isolates memorization from general capability
@@ -125,22 +119,16 @@ python script1_extraction.py \
 **Outputs:**
 ```
 s1_dp_train.json / s1_lora_train.json / s1_dp_val.json / s1_lora_val.json
-script1_extraction_test.pdf    # 6-panel: bars, sim distributions,
-                               # train vs val matrix, summary box
+script1_extraction_test.pdf    
+                              
 ```
 
 ---
 
-## Script 2 — Canary Memorization Test (Fixed)
-**File:** `script2_canary.py`  **GPU: Yes (outputs_2 + outputs_8)**
+## Script 2 — Canary Memorization Test 
+**File:** `script2_canary.py`  
 
-### Why the original canary.py was wrong
-The original script embedded the canary name INSIDE the query narration and
-asked the model to extract it. That is the ordinary extraction task — solvable
-with zero memorization. The DP model scored lower because DP hurts extraction
-utility, not because it reduced memorization.
-
-### What this script does instead
+### What this script does
 The canary name is completely HIDDEN from the query. Only the UPI handle
 derived from it is shown:
 
@@ -180,7 +168,7 @@ script2_canary_summary.pdf            # one-page combined summary
 ---
 
 ## Script 3 — 8-Variant MIA (pinned to outputs_2, ε=1.9911)
-**File:** `script3_mia.py`  **GPU: Yes (outputs_2 + outputs_8 + PT base)**
+**File:** `script3_mia.py`  
 
 Runs all 8 MIA variants from the Google DP guide and the paper's Fig 6,
 ALL targeting outputs_2 (ε=1.9911) so the attack evidence and the claimed ε
@@ -212,10 +200,10 @@ python script3_mia.py \
 **Outputs:**
 ```
 s3_mia_dp_metrics.json / s3_mia_nondp_metrics.json
-script3_mia_bar_comparison.pdf    # 8 attacks side-by-side bar chart
-script3_mia_roc_grid.pdf          # 8 ROC curves in 2×4 grid
-script3_loss_distributions.pdf    # member vs non-member loss histograms
-script3_mia_summary_table.pdf     # formatted colour-coded results table
+script3_mia_bar_comparison.pdf    
+script3_mia_roc_grid.pdf         
+script3_loss_distributions.pdf   
+script3_mia_summary_table.pdf     
 ```
 
 ---
@@ -259,7 +247,7 @@ before exiting — but a full runtime restart between scripts is safer on T4.
 | 3 | 8-variant MIA | No attack > AUC 0.52 on ε=1.9911 model |
 
 Together these establish:
-- **Formal ceiling:** ε=1.9911, δ=2.5×10⁻⁴ (Claim 6 in benchmark doc)
+- **Formal ceiling:** ε=1.9911, δ=2.5×10⁻⁴ 
 - **Empirical floor:** scripts 1–3 all show no detectable leakage
 - **Hyperparameter integrity:** every knob justified by theory + sweep evidence
 
