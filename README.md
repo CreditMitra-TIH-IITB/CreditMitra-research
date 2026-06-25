@@ -1,515 +1,175 @@
-# Credit Mitra – Full System Documentation
+# DP-QLoRA Privacy Audit — Script Suite
+## Run order, GPU requirements, outputs
 
-## Overview
-
-**Credit Mitra** is an end-to-end AI-powered pipeline for processing banking transaction narration strings. It takes raw PDF bank statements or CSV transaction files, extracts structured data, identifies merchants, extracts payee names, categorizes transactions, and stores the results in a database — all orchestrated via LangGraph and exposed through a FastAPI backend with a React frontend.
-
-**Core Use Case**: Financial institutions and fintech apps need to transform messy, unstructured narration strings (like `"UPI/DR/123456789/ZOMATO/YESB/somecode"`) into clean, structured, categorized records.
-
-**Project Plan**:
-You can find the project plan [Here][].
-<!-- Link Definitions (can be placed at the end of the file) -->
-[Here]: https://docs.google.com/spreadsheets/d/1R4jnfN6i1RINwZK6Y1QYTtlt_zAcFxYfLw7zYKLjdpI/edit?usp=sharin
+All scripts write to: `benchmark_payee/outputs_privacy_audit/`
 
 ---
 
-## System Architecture
-### Technology Stack
-
-**Backend**
-- Python 3.10+
-- FastAPI + Uvicorn
-- LangGraph (pipeline orchestration)
-- PyMongo + MongoDB (persistence)
-- Pydantic (data models)
-- PDF processing libraries
-- Modular extraction pipelines (each as its own module)
-
-**Frontend**
-- React 19 + Vite
-- TailwindCSS
-- Axios (HTTP client)
-- React Router DOM
-- Recharts (data visualization)
-
----
-
-### Frontend ↔ Backend Communication
-
-Each row is a matched pair: the React screen on the left calls the FastAPI endpoint on the right.
-
-```mermaid
-flowchart LR
-    subgraph FE["React Frontend — localhost:5173"]
-        A1[PDF upload screen]
-        A2[CSV preview table]
-        A3[Process selected]
-        A4[Dashboard charts]
-        A5[Payee lookup tools]
-    end
-
-    subgraph BE["FastAPI Backend — 127.0.0.1:8000"]
-        B1[POST /extract-pdf\nreturns CSV file]
-        B2[POST /upload-csv\nreturns transaction list]
-        B3[POST /process-selected\nruns pipeline + saves to DB]
-        B4[GET /statistics\ncategory breakdown]
-        B5["POST /payee-llm *\n4 LLM lookup variants"]
-    end
-
-    A1 -->|multipart PDF| B1
-    B1 -->|FileResponse CSV| A1
-    A2 -->|multipart CSV| B2
-    B2 -->|transaction list JSON| A2
-    A3 -->|JSON array of rows| B3
-    B3 -->|pipeline output JSON| A3
-    A4 -->|GET| B4
-    B4 -->|stats JSON| A4
-    A5 -->|plain string| B5
-    B5 -->|payee + summary JSON| A5
+## Configuration (fixed — do not change)
+```
+BASE_MODEL   = Qwen/Qwen2.5-1.5B-Instruct
+MAX_LENGTH   = 64          # compliance requirement
+ε  ≈ 2.0   (outputs_2, ε = 1.9911)
+δ  = 2.5×10⁻⁴
+C  = 1.5   (clipping norm)
+B  = 24    (batch size)
+Epochs = 6
 ```
 
 ---
 
-### LangGraph Pipeline Internals
+## Script 1 — Training Data Extraction Test
+**File:** `script1_extraction.py`
+**GPU:** Yes — loads DP model (outputs_2) + non-DP model (outputs_8)
+**Runtime:** ~15–25 min on T4/RTX
 
-What happens inside `run_pipeline()` for every transaction string. The conditional branch at `merchant?` is the key design decision — merchant transactions run two extra nodes, non-merchants skip straight to finalization.
+**What it tests:**
+Gives the model the first 50% of a REAL training narration (never the second half)
+and checks if it can complete the suffix verbatim. If the DP model completes fewer
+suffixes than the non-DP model on TRAINING samples but both are similar on VAL
+samples → DP reduced memorization. This is a valid memorization test because the
+suffix is HIDDEN from the query.
 
-```mermaid
-flowchart TD
-    START([transaction string])
-    START --> N1
-
-    N1["payee name extraction
-    LLM parses raw narration string
-    → state.payee_name"]
-
-    N1 --> N2
-
-    N2["merchant identification
-    binary classifier
-    → state.is_merchant: true / false"]
-
-    N2 --> DECISION{merchant?}
-
-    DECISION -->|yes| N3
-    DECISION -->|no| N5
-
-    N3["merchant info extraction
-    name, summary, websites
-    → state.merchant_summary
-    → state.merchant_websites"]
-
-    N3 --> N4
-
-    N4["categorization
-    food, travel, utilities...
-    → state.merchant_category"]
-
-    N4 --> N5
-
-    N5["finalization
-    save_record_to_db()
-    CSV fields + pipeline state → MongoDB"]
-
-    N5 --> END([done])
+**Run:**
+```bash
+python script1_extraction.py --project_root /path/to/benchmark_payee
 ```
 
-**Pipeline state keys written by each node:**
-
-| Key | Written by | Value |
-|---|---|---|
-| `payee_name` | payee extraction | string — e.g. `"Zomato"` |
-| `is_merchant` | merchant identification | boolean |
-| `merchant_summary` | merchant info extraction | free-text description |
-| `merchant_websites` | merchant info extraction | list of URLs |
-| `merchant_category` | categorization | label — e.g. `"Food & Dining"` |
+**Outputs:**
+- `s1_dp_train.json`, `s1_lora_train.json`, `s1_dp_val.json`, `s1_lora_val.json`
+- `script1_extraction_test.pdf`  — 6-panel figure with bar charts, sim distributions,
+                                   train vs val matrix, and summary box
 
 ---
 
-### Data Flow (PDF → MongoDB)
+## Script 2 — Canary Memorization Test (Fixed)
+**File:** `script2_canary.py`
+**GPU:** Yes — loads DP model (outputs_2) + non-DP model (outputs_8)
+**Runtime:** ~20–30 min on T4/RTX
 
-How data physically moves through the system, including the intentional re-upload loop. The CSV is returned to the user as a download so they can inspect or edit rows before choosing which ones to process.
+**What it tests (and why the previous canary.py was wrong):**
+The original canary.py embedded the canary name IN the query narration
+and asked the model to extract it — that is the ordinary task solvable
+with zero memorization. THIS script fixes it:
 
-```mermaid
-flowchart TD
-    U([user browser])
-    U -->|multipart POST /extract-pdf| S1
+The canary name is HIDDEN from the query. Only the UPI handle is shown:
+```
+Query: "A UPI transaction was processed using: zephyranth.bvlgari1234@okaxis
+        What is the full payee name registered to this handle?"
+```
+The model can only answer correctly if it memorized the name↔handle mapping
+from the training record. DP formally limits this.
 
-    S1["PDF saved to disk
-    uploads/{filename}.pdf"]
+Additionally computes the EXPOSURE METRIC (secret-sharer style):
+ranks each canary's log-probability against 100 control names.
+Rank ≈ 0.5 → not memorized. Rank → 1 → memorized.
 
-    S1 --> S2
-
-    S2["process_pdf()
-    extraction_from_pdfs module
-    raw rows extracted"]
-
-    S2 --> S3
-
-    S3["CSV written to disk
-    output/transactions_{name}.csv"]
-
-    S3 -->|FileResponse download| U
-
-    U -->|user re-uploads CSV
-    POST /upload-csv| S4
-
-    S4["read_transactions_from_csv()
-    CSV parsed row by row
-    → List[Transaction]"]
-
-    S4 --> GLOBAL1[(csv_transactions_global\nin-memory list)]
-
-    S4 -->|user selects rows
-    POST /process-selected| S5
-
-    S5["run_pipeline per transaction
-    LangGraph DAG"]
-
-    S5 --> S6
-
-    S6["save_record_to_db()
-    merges CSV fields + pipeline state
-    → MongoDB document"]
-
-    S6 --> DB[(transactions_db.transactions\nMongoDB)]
-
-    S5 --> GLOBAL2[(processed_output_global\nin-memory dict)]
-
-    GLOBAL1 -->|cross-referenced| STATS
-    GLOBAL2 -->|cross-referenced| STATS
-
-    STATS["get_statistics()
-    category totals, spent/earned
-    merchant vs non-merchant counts"]
-
-    STATS -->|GET /statistics response| U
+**Run:**
+```bash
+python script2_canary.py --project_root /path/to/benchmark_payee
 ```
 
-**MongoDB document shape** (written by `save_record_to_db`):
+**Outputs:**
+- `s2_canary_dp.json`, `s2_canary_nondp.json`, `s2_exposure.json`
+- `script2_canary_extraction_rates.pdf`  — exact vs partial recall bars
+- `script2_canary_heatmap.pdf`           — per-canary LEAK/SAFE grid
+- `script2_canary_exposure.pdf`          — exposure rank per canary
+- `script2_canary_summary.pdf`           — one-page combined summary
 
-```json
-{
-  "date": "2024-01-15",
-  "amount": 450.0,
-  "credit/debit": "DR",
-  "balance": 12000.0,
-  "reference_number": "...",
-  "type": "Food & Dining",
-  "transaction": "UPI/DR/.../ZOMATO/...",
-  "payee_name": "Zomato",
-  "is_merchant": true,
-  "merchant_summary": "Indian food delivery platform...",
-  "merchant_websites": ["zomato.com"]
-}
+---
+
+## Script 3 — 8-Variant MIA (targeting outputs_2)
+**File:** `script3_mia.py`
+**GPU:** Yes — loads DP model (outputs_2) + non-DP (outputs_8) + PT base
+**Runtime:** ~30–45 min on T4/RTX (no shadow models)
+
+**What it tests:**
+All 8 MIA variants from the Google DP guide and your paper's Fig 6,
+ALL targeting outputs_2 (ε = 1.9911) so the attack evidence and the
+claimed ε are provably from the same model.
+
+Attack variants:
+1. Basic LOSS            — raw loss threshold
+2. PT-Ref LOSS           — loss ratio vs pre-trained base
+3. Response-Only LOSS    — loss on response tokens only
+4. PT-Ref Response       — response-only ratio vs PT base
+5. Min-K% Prob           — bottom-K% token probability (Shi et al. 2024)
+6. PT-Ref Min-K%         — Min-K% ratio vs PT base
+7. Loss Variance         — within-sample token loss variance
+8. Zlib Normalised       — loss / compressed byte length
+
+**Run:**
+```bash
+python script3_mia.py --project_root /path/to/benchmark_payee
 ```
 
+**Outputs:**
+- `s3_mia_dp_metrics.json`, `s3_mia_nondp_metrics.json`
+- `script3_mia_bar_comparison.pdf`  — 8 attacks side-by-side bar chart
+- `script3_mia_roc_grid.pdf`        — 8 ROC curves in a 2×4 grid
+- `script3_loss_distributions.pdf`  — member vs non-member loss histograms
+- `script3_mia_summary_table.pdf`   — formatted results table
+
 ---
 
-### Diagram 4 — Deployment / Infrastructure
+## Script 4 — Privacy-Utility Tradeoff Dashboard
+**File:** `script4_tradeoff.py`
+**GPU:** None — reads from existing JSON outputs
+**Runtime:** < 1 min
 
-Local dev uses `localhost:27017` and local disk. Production swaps those for MongoDB Atlas and AWS S3 via environment variable updates only — no code changes needed.
+**What it produces:**
+6-panel dashboard assembling the full story:
+- Panel A: F1 vs ε for all models
+- Panel B: Privacy-utility knee curve (ε=2 is optimal)
+- Panel C: MIA-AUC vs ε (privacy floor — picks up live results from script 3)
+- Panel D: ε accumulation across all four training runs
+- Panel E: Full benchmark table (all models, all metrics)
+- Panel F: Error breakdown (exact→partial, not catastrophic failure)
 
-```mermaid
-flowchart TD
-    USER([browser / user])
+Run this LAST (after scripts 1-3) so Panel C uses the live MIA numbers.
+Or run standalone — it uses the paper's existing numbers as fallback.
 
-    USER -->|HTTPS static assets| CDN
-    USER -->|REST API calls| LB
-
-    subgraph FRONTEND["Frontend — Vercel / Netlify"]
-        CDN[CloudFront CDN\nReact + Vite SPA]
-    end
-
-    subgraph BACKEND["Backend — AWS EC2 / ECS"]
-        LB[Uvicorn + Gunicorn\nFastAPI — 4 workers]
-    end
-
-    subgraph AWS["AWS Infrastructure"]
-        S3[S3 Bucket\nPDF + CSV file storage]
-        MONGO[(MongoDB Atlas\ntransactions_db)]
-        LANG[LangGraph runtime\nin-process orchestrator]
-    end
-
-    subgraph EXTERNAL["External APIs"]
-        LLM[LLM API\nOpenAI / Gemini]
-        SEARCH[Web Search API\nSerpAPI / Tavily]
-    end
-
-    LB -->|file upload and download| S3
-    LB -->|insert and query| MONGO
-    LB -->|orchestrates| LANG
-    LANG -->|inference calls| LLM
-    LANG -->|langsearch variants only| SEARCH
+**Run:**
+```bash
+python script4_tradeoff.py --project_root /path/to/benchmark_payee
 ```
 
-**Local dev vs production equivalents:**
-
-| Component | Local dev | Production |
-|---|---|---|
-| Database | `mongodb://localhost:27017/` | MongoDB Atlas (`MONGO_URI`) |
-| File storage | `uploads/` and `output/` on disk | AWS S3 bucket |
-| Backend server | `uvicorn main:app --reload` | Gunicorn + Uvicorn workers |
-| Frontend | `npm run dev` on port 5173 | Vercel / Netlify / CloudFront |
+**Outputs:**
+- `script4_tradeoff_dashboard.pdf`  — main 6-panel figure
+- `script4_knee_standalone.pdf`     — standalone knee (for LaTeX \includegraphics)
+- `script4_eps_accumulation.pdf`    — standalone ε curves (for LaTeX)
 
 ---
 
-## Project Structure
-
-```
-Smart-Narration-Parser/
-│
-├── main.py                                # FastAPI entry point — all API routes
-├── finalize.py                            # Core pipeline runner + DB storage + stats
-├── requirements.txt
-├── .gitignore
-│
-├── extraction_from_pdfs/                  # PDF → CSV transaction extraction
-├── payee_name_extraction/                 # Extract payee names from narration strings
-├── merchant_non_merchant_identification/  # Classify: is this a merchant transaction?
-├── merchant_information_extraction/       # Extract structured merchant info
-├── categorization_of_merchants/           # Category tagging (food, travel, utilities…)
-├── langgraph_orchaestration/              # LangGraph DAG wiring all pipeline stages
-├── finalization_and_storage_in_db/        # Final DB write logic
-│
-├── uploads/                               # Temp storage for uploaded PDFs
-├── output/                                # Generated CSV files
-│
-└── client/                                # React + Vite frontend
-```
-
----
-
-## API Endpoints
-
-Base URL: `http://127.0.0.1:8000`  
-Swagger docs: `http://127.0.0.1:8000/docs`
-
----
-
-### POST `/extract-pdf`
-
-**Purpose**: Upload a PDF bank statement and extract transactions into a CSV file.
-
-**Request**: `multipart/form-data`
-
-| Field | Type | Description |
-|---|---|---|
-| `pdf` | File | PDF bank statement |
-
-**Response**: Returns a downloadable `transactions.csv` file.
-
-**Notes**:
-- PDF is saved to `uploads/` directory
-- Output CSV is saved to `output/transactions_<filename>.csv`
-- Response is a `FileResponse` with `text/csv` content type
-
----
-
-### POST `/upload-csv`
-
-**Purpose**: Upload a CSV of transactions to parse and preview before processing.
-
-**Request**: `multipart/form-data`
-
-| Field | Type | Description |
-|---|---|---|
-| `file` | File | CSV file of transactions |
-
-**Response**:
-```json
-{
-  "status": "success",
-  "transactions": [
-    {
-      "transaction": "UPI/DR/123456789/ZOMATO/YESB/...",
-      "amount": 450.0,
-      "date": "2024-01-15"
-    }
-  ]
-}
-```
-
-**Notes**: Transactions are also stored globally in `csv_transactions_global` for later statistics computation.
-
----
-
-### POST `/process-selected`
-
-**Purpose**: Run the full AI pipeline on a user-selected subset of transactions.
-
-**Request Body**: JSON array of transaction objects.
-
-```json
-[
-  { "transaction": "UPI/DR/123456789/ZOMATO/YESB/...", "amount": 450.0, "date": "2024-01-15" },
-  { "transaction": "NEFT/CR/9876543210/HDFC/...", "amount": 10000.0, "date": "2024-01-16" }
-]
-```
-
-**Response**:
-```json
-{
-  "status": "success",
-  "processed": 2,
-  "details": [
-    {
-      "transaction": "UPI/DR/123456789/ZOMATO/YESB/...",
-      "pipeline_output": {
-        "payee_name": "Zomato",
-        "is_merchant": true,
-        "merchant_category": "Food & Dining",
-        "merchant_summary": "...",
-        "merchant_websites": ["zomato.com"]
-      }
-    }
-  ]
-}
-```
-
----
-
-### GET `/statistics`
-
-**Purpose**: Aggregated statistics cross-referencing pipeline output with original CSV data.
-
-**Response**:
-```json
-{
-  "status": "success",
-  "statistics": {
-    "Food & Dining": {
-      "total_transactions": 12,
-      "merchant_transactions": 12,
-      "non_merchant_transactions": 0,
-      "total_spent": 5400.0,
-      "total_earned": 0.0
-    }
-  }
-}
-```
-
-**Error** (if no transactions processed yet):
-```json
-{ "status": "error", "message": "No processed transactions yet." }
-```
-
----
-
-### POST `/payee-llm`
-
-LLM-only payee extraction. Fastest variant, no web search.
-
-**Request**: plain string — `UPI/DR/123456789/ZOMATO/YESB/somecode`
-
-**Response**: `{ "payee_name": "Zomato", "merchant_summary": "..." }`
-
----
-
-### POST `/payee-llm-langsearch`
-
-LLM extraction with web search fallback if summary is empty or unhelpful.
-
-**Response**: `{ "payee_name": "...", "merchant_summary": "...", "merchant_websites": [...] }`
-
----
-
-### POST `/given-payee-llm`
-
-Given a known payee name, generate merchant info via LLM only.
-
-**Request**: plain string — `Zomato`
-
----
-
-### POST `/given-payee-llm-langsearch`
-
-Given a known payee name, generate enriched merchant info via LLM + web search fallback.
-
-> All four `/payee-*` variants share the same fallback logic — web search only fires when `generate_merchant_summary()` returns `None`, `""`, or `"No information found"`.
-
----
-
-## Core Logic
-
-### `finalize.py` — The Heart of the System
-
-| Function | Purpose |
-|---|---|
-| `read_transactions_from_csv()` | Parse CSV into `Transaction` objects |
-| `run_pipeline()` | Execute the full LangGraph pipeline on one transaction |
-| `save_record_to_db()` | Persist a processed transaction to MongoDB |
-| `get_statistics()` | Compute aggregated stats from processed + CSV data |
-| `api_1_payee_llm()` | LLM-only payee extraction |
-| `api_2_payee_llm_langsearch()` | LLM + web search payee extraction |
-| `api_3_given_payee_llm()` | LLM merchant info from known payee |
-| `api_4_given_payee_llm_langsearch()` | LLM + web search merchant info |
-
-### Transaction Data Model (Pydantic)
-
-```python
-class Transaction(BaseModel):
-    date: Optional[str]
-    amount: Optional[float]
-    type: Optional[str]           # "DR" or "CR"
-    balance: Optional[float]
-    reference_number: Optional[str]
-    category: Optional[str]
-    transaction: str              # Raw narration string — the key input field
-```
-
-### Global State
-
-```python
-processed_output_global: List[Dict]        # Results from /process-selected
-csv_transactions_global: List[Transaction] # Transactions from /upload-csv
-```
-
-Both are cross-referenced by `get_statistics()`. **Both reset on server restart** — a known production limitation (see Known Issues).
-
----
-
-## Local Development Setup
-
-### Backend
+## Recommended run order on Colab/Kaggle GPU
 
 ```bash
-pip install -r requirements.txt
-uvicorn main:app --reload
-# Swagger UI: http://127.0.0.1:8000/docs
+cd /content/benchmark_payee
+
+# Script 4 first (no GPU) to verify plots work
+python script4_tradeoff.py --project_root .
+
+# Then the three GPU scripts
+python script1_extraction.py --project_root . --n_samples 100
+python script2_canary.py     --project_root . --n_canaries 10
+python script3_mia.py        --project_root . --max_samples 486
+
+# Re-run script 4 to pick up live MIA results in Panel C
+python script4_tradeoff.py --project_root .
 ```
 
-### Frontend
-
-```bash
-cd client
-npm install
-npm run dev
-# http://localhost:5173
-```
+Restart runtime between scripts if GPU OOM (each script deletes its models
+and calls torch.cuda.empty_cache() before loading the next).
 
 ---
-## End-to-End Usage Example
 
-```
-1. Upload PDF
-   POST /extract-pdf  →  returns transactions.csv download
+## What each output proves (for the benchmark document)
 
-2. Review and re-upload CSV
-   POST /upload-csv   →  returns parsed transaction list
+| Script | Evidence type | Claim supported |
+|--------|--------------|-----------------|
+| 1 | Extraction test | DP suppresses verbatim memorization of training narrations |
+| 2 | Canary (fixed) | DP prevents recovery of memorized name↔handle mappings |
+| 3 | 8-variant MIA  | No current attack exceeds AUC≈0.51 on ε=2 model |
+| 4 | Dashboard      | ε=2 is the utility knee; formal guarantee predicts the attack failure |
 
-3. Select rows in UI, submit
-   POST /process-selected  →  runs LangGraph pipeline, saves to MongoDB
-
-4. View results
-   GET /statistics  →  category breakdown, merchant counts, spend totals
-```
-
-Or for single-transaction testing via Swagger at `/docs`:
-
-```
-POST /payee-llm                  →  fast LLM-only extraction
-POST /payee-llm-langsearch       →  LLM + web search fallback
-POST /given-payee-llm            →  merchant info from a known payee name
-POST /given-payee-llm-langsearch →  enriched merchant info with search fallback
-```
+Together: formal ceiling (ε=1.9911, Claim 6) + empirical floor (Scripts 1–3).
