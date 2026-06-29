@@ -36,7 +36,7 @@ from tqdm import tqdm
 
 # ── Config ────────────────────────────────────────────────────────────────────
 BASE_MODEL   = "Qwen/Qwen2.5-1.5B-Instruct"
-MAX_LENGTH   = 64          # compliance requirement — do not change
+MAX_LENGTH   = 64          
 MAX_NEW_TOKENS = 20
 PREFIX_FRAC  = 0.5         # first 50% of narration as prompt
 
