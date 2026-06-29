@@ -37,18 +37,18 @@ from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
 
 # ── Palette ───────────────────────────────────────────────────────────────────
 C = {
-    "nondp":  "#82B366",   # green  — non-private
-    "dp1":    "#AE4132",   # red    — ε≈1
-    "dp2":    "#D79B00",   # amber  — ε≈2  (operating point)
-    "dp4":    "#9C5B1D",   # brown  — ε≈4
-    "dp8":    "#555555",   # grey   — ε≈8
-    "base":   "#6C8EBF",   # blue   — zero-shot baselines
-    "theory": "#1F3B73",   # navy   — theoretical curves
-    "random": "#AAAAAA",   # grey   — random / baseline refs
-    "knee":   "#AE4132",   # red    — knee annotation
-    "tier1":  "#4CAF50",   # green  — Tier 1 zone
-    "tier2":  "#FFC107",   # amber  — Tier 2 zone
-    "tier3":  "#F44336",   # red    — Tier 3 zone
+    "nondp":  "#82B366",   
+    "dp1":    "#AE4132",  
+    "dp2":    "#D79B00",  
+    "dp4":    "#9C5B1D",   
+    "dp8":    "#555555",   
+    "base":   "#6C8EBF",   
+    "theory": "#1F3B73",  
+    "random": "#AAAAAA",  
+    "knee":   "#AE4132",  
+    "tier1":  "#4CAF50",   
+    "tier2":  "#FFC107",   
+    "tier3":  "#F44336",   
 }
 
 plt.rcParams.update({
@@ -59,9 +59,6 @@ plt.rcParams.update({
     "figure.facecolor": "white", "axes.facecolor": "#FAFAFA",
 })
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# Real data from your project (all verified from JSON files in the repo)
-# ═══════════════════════════════════════════════════════════════════════════════
 
 # ── Four ε-sweep runs (outputs_1, outputs_2, outputs_4, outputs_8) ────────────
 # Source: outputs_*/eval-dp/metrics.json + outputs_8/outputs/eval/metrics.json
@@ -113,9 +110,6 @@ DP_TRAIN_LOSS = [1.9912, 0.8780, 0.7447, 0.6701, 0.6597, 0.6408]
 DP_VAL_LOSS   = [0.9621, 0.8987, 0.7405, 0.6408, 0.5991, 0.7094]
 DP_EPS        = [1.2861, 1.5103, 1.6637, 1.7874, 1.8946, 1.9911]
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# Panel builders
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def panel_A_eps_sweep(ax):
     """Why ε=2? Show the knee across all four runs."""
@@ -509,10 +503,8 @@ def panel_J_summary_table(ax):
                  fontsize=10, fontweight="bold", pad=8)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# Main assembly
-# ═══════════════════════════════════════════════════════════════════════════════
 
+# Main assembly
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--project_root", default=".")
@@ -560,7 +552,6 @@ def main():
     plt.close(fig2)
     print(f"  [SAVED] {f2.name}")
 
-    # ── Standalone panels for LaTeX ───────────────────────────────
     standalones = [
         ("script5_eps_sweep.pdf",       panel_A_eps_sweep,       (6.5, 4.5)),
         ("script5_nsr_batch.pdf",       panel_C_nsr_batch,       (6.5, 4.5)),
