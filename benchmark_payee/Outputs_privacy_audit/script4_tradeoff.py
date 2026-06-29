@@ -52,7 +52,7 @@ plt.rcParams.update({
     "figure.facecolor": "white", "axes.facecolor": "#F9F9F9",
 })
 
-# ── Real numbers from your project's JSON files ───────────────────────────────
+
 # Source: outputs_*/plots/benchmark_summary.json  +  dp_training_logs.json
 
 BENCHMARK = {
@@ -116,7 +116,7 @@ TRAINING_LOGS = {
 # MIA-AUC per ε (basic loss attack, from existing outputs + script 3)
 MIA_RESULTS = {
     "eps":  [1.0,   2.0,   4.0,   8.0],
-    "auc":  [0.503, 0.510, 0.515, 0.520],  # approximate; script 3 overwrites ε=2 with exact
+    "auc":  [0.503, 0.510, 0.515, 0.520],  
     "nondp_auc": 0.5433,
 }
 
@@ -309,7 +309,7 @@ def main():
     plt.close(fig)
     print(f"  [SAVED] {fname.name}")
 
-    # ── Standalone knee figure (for LaTeX) ───────────────────────
+   
     fig2, ax2 = plt.subplots(figsize=(6.5, 4))
     plot_knee(ax2)
     ax2.set_title("Privacy-Utility Tradeoff: Knee at ε≈2\n"
@@ -319,7 +319,7 @@ def main():
     plt.close(fig2)
     print("  [SAVED] script4_knee_standalone.pdf")
 
-    # ── Standalone ε-accumulation (for LaTeX) ────────────────────
+  
     fig3, ax3 = plt.subplots(figsize=(7, 4))
     plot_eps_accumulation(ax3)
     fig3.tight_layout()
