@@ -163,6 +163,8 @@ adapter.
 | Character n-gram vectors for near-miss merchants | Qwen3 neural embeddings; an external vector DB | At a 0.4% false-match budget: n-grams recover 81.6% of near-miss variants vs 36.8% neural, at microseconds vs 144 ms per name. ~400 vectors → in-process brute force; a vector DB service adds operations without benefit at this scale. |
 | Ground payees in the narration | Trust the model | 0/486 correct payees rejected; 13/220 invented payees caught on a real statement. |
 | Count distinct statements, not requests, before any external call | Request count | Request counts can be inflated by resubmitting one statement. |
+| Rebuild borderless table bodies from word positions | Rely on Docling's table detection | In Docker (Linux), Docling found no tables in a real Canara statement that it reads on Windows, with identical versions, weights and page renders. The fallback reproduces Docling's Windows output exactly (220/220). |
+| `gemini-3.5-flash-lite` for curation; retry transient errors; stop on spent quota | Larger flash models; treat every failure as abstention | First live run: the original default model was retired, the API returned bursts of 503s and timeouts, and the free tier allows ~20 requests/day on the larger models. The lite model completed the run with two-path agreement. |
 | Merchant server as a tier after on-device tiers | Server replaces local resolution | Local tiers resolve most names without any network call; less data leaves the device. |
 | Rule-based, expert-weighted scorecard | Fitted model | No labelled outcome data exists yet; an additive scorecard is auditable and is the regulated-industry norm. Predictive validation is pending (WP4). |
 
@@ -184,14 +186,21 @@ adapter.
 ## 7. Known limitations and next steps
 
 1. **Predictive validity.** The score is not validated against loan outcomes.
-   The incremental-lift harness (null and positive controls pass) is ready to
-   run on the public PKDD'99 dataset and, later, on lender data.
+   The incremental-lift harness (null and positive controls pass) has run on
+   the public PKDD'99 (Berka) dataset with a decision-time cutoff: cash flow
+   alone reaches AUC 0.897, and Berka's six transaction-type categories add
+   nothing (−0.026) at 63 defaults. Berka has no merchant names, so this says
+   little about UPI merchant enrichment. Candidate datasets with real merchant
+   categories and defaults (Alfa-Bank card transactions; Home Credit) are
+   identified; Indian UPI evidence needs a lender pilot.
 2. **Bank coverage.** Extraction is tested on real statements from one bank;
    other layouts on synthetic renders. A multi-bank real-statement set is needed.
 3. **Long-tail merchants.** About 40% of merchant payees on a real statement
    are local shops that only the curation loop (live LangSearch + LLM) can
-   resolve; that loop has not run against live APIs yet.
-4. **Deployment (TRL 5).** Containerised but not yet hosted; authentication
-   design depends on the hosted-service vs desktop-tool decision.
+   resolve. The loop now runs live; on the free tier it can vet only a handful
+   of names a day, and only names seen in ≥ 3 distinct statements.
+4. **Deployment (TRL 5).** The containerised stack is verified end to end on a
+   real statement but not yet hosted; authentication design depends on the
+   hosted-service vs desktop-tool decision.
 5. **DP model in serving.** The DP adapter is trained and evaluated but not yet
    the served model.
