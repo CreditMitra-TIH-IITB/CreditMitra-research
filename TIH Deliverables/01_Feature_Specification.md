@@ -202,10 +202,13 @@ stated gap) · **Planned**.
   opaque statement fingerprint (HMAC under a device-local secret) reach the
   merchant server; external calls (web search, LLM) happen only from the
   server, only for names seen in ≥ 3 distinct statements; uploads deleted
-  after processing; crash-interrupted uploads deleted at restart.
-- **Gaps:** task results are stored as plain JSON; the engine has no
-  authentication (designed as a local tool); the deployed payee model is not
-  the DP-trained adapter (see F3).
+  after processing; crash-interrupted uploads deleted at restart; task results
+  encrypted at rest (Fernet, `TASK_ENCRYPTION_KEY`) and deleted after a
+  retention period (`RESULT_RETENTION_DAYS`) — required and 30 days in the
+  Docker deployment, opt-in for local installs; task ids validated before use
+  as file paths.
+- **Gaps:** the engine has no authentication (designed as a local tool); the
+  deployed payee model is not the DP-trained adapter (see F3).
 
 ### F10 — Analyst dashboard — *Done*
 

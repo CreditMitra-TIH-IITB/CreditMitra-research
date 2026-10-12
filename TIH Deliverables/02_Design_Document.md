@@ -147,10 +147,10 @@ the dashboard's TypeScript types. The contract is additive-only.
 | Model memorising training narrations | DP-SGD training (ε ≈ 1.99, δ = 2.5×10⁻⁴); membership-inference AUC ≈ 0.51 across 8 attack variants (privacy audit suite) |
 | A wrong high-severity label harming a borrower | No prefix or fuzzy path can produce gambling/BNPL/crypto/loan labels; automatic promotion of those needs ≥ 0.90 confidence and agreement of two LLM paths; every promotion is auditable and reversible |
 | Health data lowering a score | Healthcare excluded from every ratio and index (fair lending) |
+| Stored results read off disk | Results encrypted at rest with a Fernet key held outside the data volume; expired after a retention period (30 days in Docker) |
 
-**Open items:** results JSON is not encrypted at rest; the engine has no
-authentication; the served payee model is the standard adapter, not the DP
-adapter.
+**Open items:** the engine has no authentication; the served payee model is
+the standard adapter, not the DP adapter.
 
 ---
 
