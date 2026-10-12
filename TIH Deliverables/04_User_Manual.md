@@ -139,6 +139,10 @@ as Gig Hustler, Salaried Saver, BNPL-Heavy Spender and Gambler.
   many statements they appeared in.
 - `POST /api/v1/merchants/propose` — run the curation job (needs
   `LANGSEARCH_API_KEY` and `GEMINI_API_KEY`; without them nothing is proposed).
+  On the Gemini free tier each model has a small daily allowance (about 20
+  requests for the larger flash models, ~4 per merchant); the default
+  `GEMINI_MODEL=gemini-3.5-flash-lite` goes further. When the allowance runs
+  out the job stops and the remaining names wait for the next run.
 - `GET /api/v1/merchants/candidates?status=held` — what was held back and why.
 - `POST /api/v1/merchants/reverse/{name}` — undo an automatic promotion.
 

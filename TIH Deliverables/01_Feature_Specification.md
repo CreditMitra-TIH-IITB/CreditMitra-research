@@ -71,7 +71,9 @@ stated gap) · **Planned**.
   are recognised by keyword (e.g. "Withdrawal Amt.", "Transaction Remarks",
   "Balance (INR)"), not by exact header; single-amount layouts with a Dr/Cr
   column are supported; continuation pages and wrapped narrations are joined;
-  opening/closing-balance and orphan cheque-reference rows are dropped.
+  opening/closing-balance and orphan cheque-reference rows are dropped. For
+  statements that box only the header row (Canara e-passbook), the fallback
+  rebuilds the table body from word positions under the header's columns.
 - **Acceptance criteria**
   - Every transaction row of a supported layout is extracted (verified on HDFC,
     SBI, ICICI and Axis layouts — 66/66, 70/70, 68/68, 54/54 rows — and a real
@@ -80,6 +82,10 @@ stated gap) · **Planned**.
     day-first date formats parse correctly.
   - An unreadable layout **fails the task** with the headers that were seen,
     rather than completing with zero transactions.
+  - Extraction does not depend on Docling alone: on Linux (Docker) Docling
+    detected no tables in the real Canara statement, and the fallback
+    reproduces Docling's Windows output exactly (220/220 transactions, same
+    date, amount, direction and balance).
 - **Gap:** real statements have been tested from one bank (Canara); the other
   layouts are rendered from synthetic data. A multi-bank real-statement set is
   pending (WP1/WP5).
@@ -134,7 +140,7 @@ stated gap) · **Planned**.
   - Vector tier: ≤ 0.5% false matches on local-shop and person names (measured
     0.3% at threshold 0.75, recovering 67% of near-miss brand variants).
 
-### F6 — Self-curating merchant knowledge (merchant server) — *Partial*
+### F6 — Self-curating merchant knowledge (merchant server) — *Done*
 
 - **Behaviour:** names nobody can resolve are logged with frequency and the
   number of *distinct statements* they appeared in. A curation job searches the
@@ -148,8 +154,16 @@ stated gap) · **Planned**.
     both LLM paths.
   - Every promotion records model, confidence, summary and evidence.
   - Fails closed: no API key configured → 503; no LLM key → proposes nothing.
-- **Gap:** the LangSearch and Gemini calls have not yet been exercised against
-  the live APIs (tested with fakes).
+  - Transient API failures (429/5xx, timeouts, dropped connections) are
+    retried; a spent daily quota stops the run and leaves names queued rather
+    than recording them as abstentions.
+- **Live run (12 Oct 2026, public brand names only):** Namdhari's Fresh →
+  groceries, Bewakoof → shopping, Blue Tokai → dining, FabIndia → shopping,
+  PaySense → lending (high-severity: 0.95 with both paths agreeing); a made-up
+  name abstained. No name from a real statement was eligible (all below the
+  3-statement bar).
+- **Constraint:** on the Gemini free tier the larger flash models allow ~20
+  requests per day (~5 merchants); `gemini-3.5-flash-lite` is the default.
 
 ### F7 — Cash-flow features and lifestyle indices — *Done*
 
@@ -162,7 +176,8 @@ stated gap) · **Planned**.
   - **Healthcare is excluded from every ratio and index** (fair lending).
   - Salary is detected for employers that are companies; gig platforms are
     never counted as salary.
-  - Only failed debit instructions count as bounces; refunds and reversals never do.
+  - Only failed debit instructions count as bounces (ECS/NACH/cheque/mandate
+    RETURN or UNPAID, insufficient funds); refunds and reversals never do.
 
 ### F8 — Score, band, archetype and reasons — *Done (not predictive-validated)*
 
@@ -187,10 +202,13 @@ stated gap) · **Planned**.
   opaque statement fingerprint (HMAC under a device-local secret) reach the
   merchant server; external calls (web search, LLM) happen only from the
   server, only for names seen in ≥ 3 distinct statements; uploads deleted
-  after processing; crash-interrupted uploads deleted at restart.
-- **Gaps:** task results are stored as plain JSON; the engine has no
-  authentication (designed as a local tool); the deployed payee model is not
-  the DP-trained adapter (see F3).
+  after processing; crash-interrupted uploads deleted at restart; task results
+  encrypted at rest (Fernet, `TASK_ENCRYPTION_KEY`) and deleted after a
+  retention period (`RESULT_RETENTION_DAYS`) — required and 30 days in the
+  Docker deployment, opt-in for local installs; task ids validated before use
+  as file paths.
+- **Gaps:** the engine has no authentication (designed as a local tool); the
+  deployed payee model is not the DP-trained adapter (see F3).
 
 ### F10 — Analyst dashboard — *Done*
 
@@ -206,6 +224,8 @@ stated gap) · **Planned**.
 
 - Docker images for engine, merchant server and dashboard; one compose file
   runs the stack with the payee model on host or containerised Ollama.
+  Verified end to end: all three services build and report healthy, and a real
+  220-row statement processes inside the containers (same result as native).
 - **Gap:** not yet deployed to a hosted environment (TRL 5); no multi-tenant
   authentication. Whether the product is a lender-hosted service or a local
   desktop tool is an open decision that determines the authentication design.
@@ -216,7 +236,7 @@ stated gap) · **Planned**.
 
 | Area | Requirement | Current |
 |---|---|---|
-| Throughput | A 6-month statement (~200 rows) processed in under 5 minutes on a laptop-class machine | 162 s for 220 rows; 30–42 s for 54–70 rows |
+| Throughput | A 6-month statement (~200 rows) processed in under 5 minutes on a laptop-class machine | 162 s for 220 rows natively, ~115 s in Docker; 16–42 s for 54–70 rows |
 | Memory | Engine fits in 6 GB | ~3 GB with the FP16 classifier |
 | Startup | API available immediately; models load in background | `/health` in ~8 s; models warm in 1–2 min |
 | Robustness | No stage failure crashes the task; scoring is best-effort | Enforced by tests |

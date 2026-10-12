@@ -12,8 +12,8 @@ check and the model evaluations are scripted and repeatable.
 
 | Repository | Suite | Tests | Runs in CI |
 |---|---|---:|---|
-| Engine | `tests/` (pytest) | 206 | Yes — plus ruff, mypy (strict), Docker build + boot |
-| Merchant server | `test_server.py`, `test_proposer.py` | 48 | Yes |
+| Engine | `tests/` (pytest) | 216 | Yes — plus ruff, mypy (strict), Docker build + boot |
+| Merchant server | `test_server.py`, `test_proposer.py`, `test_providers.py` | 57 | Yes |
 | Dashboard | Vitest | 6 | Yes — plus ESLint, Prettier, tsc, build, Docker build + SPA routing |
 | End-to-end | `scripts/e2e_check.py` against a running engine | 5 statements | Manual / scripted |
 
@@ -23,14 +23,16 @@ Engine tests by area:
 |---|---:|---|
 | `test_statement_layout.py` | 44 | F2 column detection across layouts |
 | `test_extraction_fallback.py` | 5 | F2 Docling → pdfplumber fallback, unreadable layouts fail loudly |
+| `test_borderless_fallback.py` | 3 | F2 boxed-header, borderless-body statements rebuilt from word positions |
 | `test_persona_ranking.py` | 62 | F7/F8 personas: ordering, discrimination, fair lending, salary detection |
-| `test_quality_guards.py` | 23 | F3 grounding, F4 person guard, F7 gig income, bounces and healthcare exclusion, F1 crash recovery |
+| `test_quality_guards.py` | 27 | F3 grounding, F4 person guard, F7 gig income, bounces (incl. UNPAID) and healthcare exclusion, F1 crash recovery |
 | `test_dictionary_matching.py` | 19 | F5 dictionary coverage and high-severity safety |
 | `test_merchant_vectors.py` | 13 | F5 vector tier |
 | `test_enrichment_tiers.py` | 10 | F5 tier order, cache versioning, server as a tier |
 | `test_enrichment_websearch_grounding.py` | 4 | F5 web-search tier |
 | `test_enrichment_privacy.py` | 3 | F9 outbound payload contents, statement fingerprint |
 | `test_incremental_lift.py` | 17 | WP4 measurement harness (null and positive controls) |
+| `test_berka_adapter.py` | 3 | WP4 Berka adapter: decision-time cutoff, finished-loans formulation |
 | `test_upload_cleanup.py` | 3 | F1 upload deletion, per-payee deduplication |
 | `test_health.py` | 3 | API health |
 
@@ -61,6 +63,7 @@ Type: **U** unit · **I** integration (API or multi-module) · **E** end-to-end 
 | TC-15 | Docling crashes or finds nothing | pdfplumber fallback used | U | `test_extraction_fallback` |
 | TC-16 | Unrecognisable layout | Task fails naming the headers seen | U | `test_extraction_fallback` |
 | TC-17 | HDFC / SBI / ICICI / Axis layouts | Every row extracted | E | `e2e_check.py` (§3) |
+| TC-18 | Statement with a boxed header and an unruled body (Canara) | Fallback rebuilds every transaction; matches Docling 220/220 | U/E | `test_borderless_fallback`, real statement |
 
 ### Payee extraction (F3)
 
@@ -100,6 +103,9 @@ Type: **U** unit · **I** integration (API or multi-module) · **E** end-to-end 
 | TC-50 | High-severity proposal where the two LLM paths disagree | Held, not promoted | I | `test_proposer` |
 | TC-51 | Automatic promotion reversed | Entry removed; hand-curated entries untouched | I | `test_proposer` |
 | TC-52 | Server without API key | 503 (fails closed) | I | `test_server` |
+| TC-53 | LLM returns 429/5xx, times out, or drops the connection | Retried with backoff | U | `test_providers` |
+| TC-54 | LLM daily quota spent mid-run | Run stops; unjudged names stay queued, nothing recorded as an abstention | U/I | `test_providers`, `test_proposer` |
+| TC-55 | Live curation on public brand names | Correct categories promoted with evidence; made-up name abstains | E | live run (§3) |
 
 ### Scoring (F7, F8)
 
@@ -112,6 +118,7 @@ Type: **U** unit · **I** integration (API or multi-module) · **E** end-to-end 
 | TC-64 | Merchant refunds / reversals | Not bounces | U | `test_quality_guards` |
 | TC-65 | ECS/NACH return, insufficient funds | Counted as bounces | U | `test_quality_guards` |
 | TC-66 | Every index and both scorecard blocks | Can both reward and penalise; no score pinned to a bound | U | `test_persona_ranking` |
+| TC-67 | 'NACH UNPAID', 'ECS UNPAID', 'UNPAID CHQ' | Counted as bounces | U | `test_quality_guards` |
 
 ### Privacy (F9)
 
@@ -132,6 +139,7 @@ Type: **U** unit · **I** integration (API or multi-module) · **E** end-to-end 
 | TC-83 | Task completes without a report | "Report unavailable" — never a sample score | U/manual | Dashboard |
 | TC-84 | Engine image with no models or Ollama | Boots and answers `/health` | I | CI Docker job |
 | TC-85 | Dashboard image, client-side route | Serves the app (no 404) | I | CI Docker job |
+| TC-86 | Full compose stack | All three services healthy; real statement processed in containers | E | manual (§3) |
 
 ---
 
@@ -157,6 +165,7 @@ non-zero if any statement fails or yields no transactions.
 | ICICI layout (synthetic BNPL user) | 68/68 | 44/50 | 42 s | 513 Poor · BNPL-Heavy Spender |
 | Axis layout, Dr/Cr column (synthetic gambler) | 54/54 | 32/42 | 30 s | 391 Poor · Gambler |
 | Real Canara statement | 220 | 33/54 | ~185 s | 595 Fair · Balanced |
+| Real Canara statement, in Docker | 220 | 34/54 | 115 s | 595 Fair · Balanced |
 
 Re-running the real statement through engine + merchant server confirmed the
 privacy gate: 16 unresolved names reached the server, each counted once even
@@ -171,12 +180,14 @@ though the statement was submitted twice.
 - **Incremental lift (WP4)** — measures what merchant information adds to a
   cash-flow-only model, with paired bootstrap confidence intervals. Null
   control: no lift manufactured (−0.001 ΔAUC, CI spans 0). Positive control:
-  real signal found (+0.276 ΔAUC). Pending: the public PKDD'99 dataset, then
-  lender data.
+  real signal found (+0.276 ΔAUC). PKDD'99 (Berka, real Czech outcomes,
+  decision-time cutoff, 620 loans / 63 defaults): cash flow alone AUC 0.897;
+  the six transaction-type categories add nothing (−0.026, CI excludes zero).
+  Inconclusive for UPI merchants — Berka has none. Pending: a dataset with
+  real merchant categories and defaults, then lender data.
 
 ## 5. Not yet covered
 
 - Real statements from banks other than Canara.
-- Live LangSearch / Gemini calls in the curation loop.
 - Load testing with concurrent uploads.
 - Hosted deployment (TRL 5).
